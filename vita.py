@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import Toplevel, Listbox, Entry, Label, Button, messagebox
+from tkinter import Toplevel, Listbox, Entry, Label, Button, messagebox,ttk, Frame
 import mysql.connector
 
 def create_db_connection():
@@ -19,11 +19,25 @@ def mostrar_pessoas():
     if con is not None:
         cursor = con.cursor()
         try:
-            cursor.execute("SELECT nome FROM pessoa")
+            # Consulta para buscar nomes e tipos das pessoas
+            cursor.execute("""
+                SELECT p.nome, 
+                       CASE 
+                         WHEN pa.cpf IS NOT NULL THEN 'Paciente'
+                         WHEN m.id_funcionario IS NOT NULL THEN 'Médico'
+                         WHEN e.id_funcionario IS NOT NULL THEN 'Enfermeiro'
+                         ELSE 'Desconhecido'
+                       END as tipo
+                FROM pessoa p
+                LEFT JOIN paciente pa ON p.cpf = pa.cpf
+                LEFT JOIN funcionario f ON p.cpf = f.cpf
+                LEFT JOIN medico m ON f.id_funcionario = m.id_funcionario
+                LEFT JOIN enfermeiro e ON f.id_funcionario = e.id_funcionario
+            """)
             resultado = cursor.fetchall()
             lista_pessoas.delete(0, tk.END)
             for linha in resultado:
-                lista_pessoas.insert(tk.END, linha[0])
+                lista_pessoas.insert(tk.END, f"{linha[0]} - {linha[1]}")
         except mysql.connector.Error as err:
             print(f"Erro ao buscar dados: {err}")
         finally:
@@ -136,20 +150,96 @@ def adicionar_pessoa():
             cursor = con.cursor()
             try:
                 query = """INSERT INTO pessoa (cpf, nome, data_nascimento, telefone, endereco, bairro, estado) 
-                           VALUES (%s, %s, %s, %s, %s, %s, %s)"""
-                cursor.execute(query, (entry_cpf.get(), entry_nome.get(), entry_data_nascimento.get(), 
-                                       entry_telefone.get(), entry_endereco.get(), entry_bairro.get(), 
-                                       entry_estado.get()))
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)"""
+                cpf = entry_cpf.get()
+                cursor.execute(query, (cpf, entry_nome.get(), entry_data_nascimento.get(), 
+                                    entry_telefone.get(), entry_endereco.get(), entry_bairro.get(), 
+                                    entry_estado.get()))
                 con.commit()
                 print("Pessoa adicionada com sucesso!")
+                pedir_tipo_pessoa(cpf)  # Chama a função para pedir o tipo da pessoa
             except mysql.connector.Error as err:
                 print(f"Erro ao adicionar pessoa: {err}")
             finally:
                 cursor.close()
                 con.close()
-        add_window.destroy()
+            add_window.destroy()
+        pedir_tipo_pessoa(entry_cpf.get())
 
     Button(add_window, text="Salvar", command=salvar_pessoa).pack()
+
+    def pedir_tipo_pessoa(cpf):
+        tipo_window = Toplevel(root)
+        tipo_window.title("Selecionar Tipo")
+
+        Label(tipo_window, text="Selecione o Tipo:").pack()
+
+        Button(tipo_window, text="Funcionário", command=lambda: adicionar_tipo_funcionario(cpf, tipo_window)).pack()
+        Button(tipo_window, text="Paciente", command=lambda: adicionar_tipo_paciente(cpf, tipo_window)).pack()
+
+    def adicionar_tipo_funcionario(cpf, parent_window):
+        funcionario_window = Toplevel(root)
+        funcionario_window.title("Adicionar Funcionário")
+
+        cargo_var = tk.StringVar()
+        Label(funcionario_window, text="Cargo:").pack()
+        cargo_menu = ttk.Combobox(funcionario_window, textvariable=cargo_var, values=["Médico", "Enfermeiro"])
+        cargo_menu.pack()
+
+        Label(funcionario_window, text="CRM:").pack()
+        crm_entry = Entry(funcionario_window)
+        crm_entry.pack()
+
+        Label(funcionario_window, text="Especialidade:").pack()
+        especialidade_entry = Entry(funcionario_window)
+        especialidade_entry.pack()
+
+        Label(funcionario_window, text="COREN:").pack()
+        coren_entry = Entry(funcionario_window)
+        coren_entry.pack()
+
+        Label(funcionario_window, text="Setor:").pack()
+        setor_entry = Entry(funcionario_window)
+        setor_entry.pack()
+
+        def salvar_funcionario():
+            if cargo_var.get() == "Médico":
+                crm = crm_entry.get()
+                especialidade = especialidade_entry.get()
+                # Salvar informações de médico no banco de dados
+            elif cargo_var.get() == "Enfermeiro":
+                coren = coren_entry.get()
+                setor = setor_entry.get()
+                # Salvar informações de enfermeiro no banco de dados
+            mostrar_pessoas()
+        funcionario_window.destroy()
+        parent_window.destroy()
+
+
+        Button(funcionario_window, text="Salvar Funcionário", command=salvar_funcionario).pack()
+
+def adicionar_tipo_paciente(cpf, parent_window):
+    paciente_window = Toplevel(root)
+    paciente_window.title("Adicionar Paciente")
+
+    Label(paciente_window, text="Tipo Sanguíneo:").pack()
+    tipo_sanguineo_entry = Entry(paciente_window)
+    tipo_sanguineo_entry.pack()
+
+    Label(paciente_window, text="Órgão para Transplante:").pack()
+    orgao_transplante_entry = Entry(paciente_window)
+    orgao_transplante_entry.pack()
+
+    def salvar_paciente():
+        tipo_sanguineo = tipo_sanguineo_entry.get()
+        orgao_transplante = orgao_transplante_entry.get()
+        # Salvar informações do paciente no banco de dados
+        mostrar_pessoas()
+        paciente_window.destroy()
+        parent_window.destroy()
+
+    Button(paciente_window, text="Salvar Paciente", command=salvar_paciente).pack()
+    parent_window.destroy()
 
 def remover_pessoa():
     remove_window = Toplevel(root)
@@ -160,16 +250,25 @@ def remover_pessoa():
     entry_cpf.pack()
 
     def confirmar_remocao():
+        cpf = entry_cpf.get()
         con = create_db_connection()
         if con is not None:
             cursor = con.cursor()
             try:
-                query = "DELETE FROM pessoa WHERE cpf = %s"
-                cursor.execute(query, (entry_cpf.get(),))
+                # Primeiro, remova registros relacionados de tabelas que usam o id_funcionario
+                cursor.execute("DELETE FROM medico WHERE id_funcionario IN (SELECT id_funcionario FROM funcionario WHERE cpf = %s)", (cpf,))
+                cursor.execute("DELETE FROM enfermeiro WHERE id_funcionario IN (SELECT id_funcionario FROM funcionario WHERE cpf = %s)", (cpf,))
+                # Agora remova registros da tabela funcionario e paciente
+                cursor.execute("DELETE FROM funcionario WHERE cpf = %s", (cpf,))
+                cursor.execute("DELETE FROM paciente WHERE cpf = %s", (cpf,))
+                # Por fim, remova o registro na tabela pessoa
+                cursor.execute("DELETE FROM pessoa WHERE cpf = %s", (cpf,))
+
                 con.commit()
-                print("Pessoa removida com sucesso!")
+                messagebox.showinfo("Sucesso", "Pessoa removida com sucesso!")
             except mysql.connector.Error as err:
-                print(f"Erro ao remover pessoa: {err}")
+                messagebox.showerror("Erro", f"Erro ao remover pessoa: {err}")
+                con.rollback()
             finally:
                 cursor.close()
                 con.close()
@@ -177,102 +276,111 @@ def remover_pessoa():
 
     Button(remove_window, text="Remover", command=confirmar_remocao).pack()
 
-def pesquisar_por_idade():
-    pesquisa_window = Toplevel(root)
-    pesquisa_window.title("Pesquisar por Idade")
+def on_pessoa_select(event):
+    widget = event.widget
+    if not widget.curselection():  # Verifica se há um item selecionado
+        return
+    index = int(widget.curselection()[0])
+    nome_pessoa = widget.get(index).split(" - ")[0]  # Pega apenas o nome
+    mostrar_detalhes_pessoa(nome_pessoa)
 
-    Label(pesquisa_window, text="Idade").pack()
-    entry_idade = Entry(pesquisa_window)
-    entry_idade.pack()
-
-    def pesquisar_por_idade():
-        pesquisa_window = Toplevel(root)
-        pesquisa_window.title("Pesquisar por Idade")
-
-        Label(pesquisa_window, text="Idade").pack()
-        entry_idade = Entry(pesquisa_window)
-        entry_idade.pack()
-
-    def buscar_por_idade():
-        idade = entry_idade.get()
+def mostrar_detalhes_pessoa(nome_pessoa):
+    con = create_db_connection()
+    if con is not None:
+        cursor = con.cursor()
         try:
-            idade = int(idade)
-        except ValueError:
-            messagebox.showerror("Erro", "Por favor, insira um número válido para a idade.")
-            return
+            cursor.execute("SELECT * FROM pessoa WHERE nome = %s", (nome_pessoa,))
+            pessoa = cursor.fetchone()
+            if pessoa:
+                detalhes_window = Toplevel(root)
+                detalhes_window.title(f"Detalhes de {nome_pessoa}")
 
-        con = create_db_connection()
-        if con is not None:
-            cursor = con.cursor()
-            try:
-                # Calcula o ano de nascimento com base na idade inserida
-                ano_nascimento = datetime.datetime.now().year - idade
-                cursor.execute("SELECT nome FROM pessoa WHERE YEAR(data_nascimento) = %s", (ano_nascimento,))
-                resultado = cursor.fetchall()
-                lista_pessoas.delete(0, tk.END)
-                for linha in resultado:
+                for col, val in zip(["CPF", "Nome", "Data Nascimento", "Telefone", "Endereço", "Bairro", "Estado"], pessoa):
+                    Label(detalhes_window, text=f"{col}: {val}").pack()
+        except mysql.connector.Error as err:
+            print(f"Erro ao buscar dados: {err}")
+        finally:
+            cursor.close()
+            con.close()
+
+def filtrar_por_tipo():
+    filtro_window = Toplevel(root)
+    filtro_window.title("Filtrar por")
+
+    Button(filtro_window, text="Pacientes", command=lambda: filtrar("paciente")).pack()
+    Button(filtro_window, text="Médicos", command=lambda: filtrar("medico")).pack()
+    Button(filtro_window, text="Enfermeiros", command=lambda: filtrar("enfermeiro")).pack()
+
+
+
+def filtrar(tipo):
+    con = create_db_connection()
+    if con is not None:
+        cursor = con.cursor()
+        try:
+            if tipo == "paciente":
+                # Consulta para pacientes
+                cursor.execute("SELECT pessoa.nome, paciente.tipo_sanguineo, paciente.orgao_transplante FROM pessoa INNER JOIN paciente ON pessoa.cpf = paciente.cpf")
+            elif tipo == "medico":
+                # Consulta para médicos
+                cursor.execute("SELECT pessoa.nome, medico.crm, medico.especialidade FROM pessoa INNER JOIN funcionario ON pessoa.cpf = funcionario.cpf INNER JOIN medico ON funcionario.id_funcionario = medico.id_funcionario")
+            elif tipo == "enfermeiro":
+                # Consulta para enfermeiros
+                cursor.execute("SELECT pessoa.nome, enfermeiro.coren FROM pessoa INNER JOIN funcionario ON pessoa.cpf = funcionario.cpf INNER JOIN enfermeiro ON funcionario.id_funcionario = enfermeiro.id_funcionario")
+
+            resultado = cursor.fetchall()
+            lista_pessoas.delete(0, tk.END)
+            for linha in resultado:
+                if tipo in ["medico", "paciente", "enfermeiro"]:
+                    # Formatação de acordo com o tipo selecionado
+                    info_adicional = ', '.join([f"{item}" for item in linha[1:]])
+                    lista_pessoas.insert(tk.END, f"{linha[0]} - {info_adicional}")
+                else:
                     lista_pessoas.insert(tk.END, linha[0])
-            except mysql.connector.Error as err:
-                print(f"Erro ao buscar dados: {err}")
-            finally:
-                cursor.close()
-                con.close()
-
-    def ordenar_por_idade_crescente():
-        con = create_db_connection()
-        if con is not None:
-            cursor = con.cursor()
-            try:
-                cursor.execute("SELECT nome FROM pessoa ORDER BY data_nascimento")
-                resultado = cursor.fetchall()
-                lista_pessoas.delete(0, tk.END)
-                for linha in resultado:
-                    lista_pessoas.insert(tk.END, linha[0])
-            except mysql.connector.Error as err:
-                print(f"Erro ao buscar dados: {err}")
-            finally:
-                cursor.close()
-                con.close()
-
-    def ordenar_por_idade_decrescente():
-        con = create_db_connection()
-        if con is not None:
-            cursor = con.cursor()
-            try:
-                cursor.execute("SELECT nome FROM pessoa ORDER BY data_nascimento DESC")
-                resultado = cursor.fetchall()
-                lista_pessoas.delete(0, tk.END)
-                for linha in resultado:
-                    lista_pessoas.insert(tk.END, linha[0])
-            except mysql.connector.Error as err:
-                print(f"Erro ao buscar dados: {err}")
-            finally:
-                cursor.close()
-                con.close()
-
-    Button(pesquisa_window, text="Buscar por Idade", command=buscar_por_idade).pack()
-    Button(pesquisa_window, text="Ordenar por Idade (Crescente)", command=ordenar_por_idade_crescente).pack()
-    Button(pesquisa_window, text="Ordenar por Idade (Decrescente)", command=ordenar_por_idade_decrescente).pack()
+        except mysql.connector.Error as err:
+            print(f"Erro ao buscar dados: {err}")
+        finally:
+            cursor.close()
+            con.close()
 
 
 
 root = tk.Tk()
 root.title("Lista de Pessoas")
+root.state('zoomed')
 
-botao_pesquisar_idade = Button(root, text="Pesquisar por Idade", command=pesquisar_por_idade)
-botao_pesquisar_idade.pack()
+main_frame = Frame(root)
+main_frame.pack(fill=tk.BOTH, expand=True)
 
-botao_mostrar = tk.Button(root, text="Visualizar Pessoas", command=mostrar_pessoas)
-botao_mostrar.pack()
+button_frame = Frame(main_frame)
+button_frame.pack(side=tk.TOP, fill=tk.X)
 
-botao_adicionar = tk.Button(root, text="Adicionar Pessoa", command=adicionar_pessoa)
-botao_adicionar.pack()
+# Adicionando botões ao frame dos botões
+botao_filtrar_por = Button(button_frame, text="Filtrar por", command=filtrar_por_tipo)
+botao_filtrar_por.pack(side=tk.LEFT, padx=10)
 
-botao_remover = tk.Button(root, text="Remover Pessoa", command=remover_pessoa)
-botao_remover.pack()
+botao_mostrar = Button(button_frame, text="Visualizar Pessoas", command=mostrar_pessoas)
+botao_mostrar.pack(side=tk.LEFT, padx=10)
 
-lista_pessoas = Listbox(root)
+botao_adicionar = Button(button_frame, text="Adicionar Pessoa", command=adicionar_pessoa)
+botao_adicionar.pack(side=tk.LEFT, padx=10)
+
+botao_remover = Button(button_frame, text="Remover Pessoa", command=remover_pessoa)
+botao_remover.pack(side=tk.LEFT, padx=10)
+
+# Frame para a Listbox e área de detalhes
+list_detail_frame = Frame(main_frame)
+list_detail_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+# Listbox no lado esquerdo
+lista_pessoas = Listbox(list_detail_frame)
 lista_pessoas.bind('<<ListboxSelect>>', on_pessoa_select)
-lista_pessoas.pack()
+lista_pessoas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+# Área de detalhes no lado direito (se necessário)
+detail_area = Frame(list_detail_frame)
+detail_area.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+# ... [resto do seu código] ...
 
 root.mainloop()
