@@ -336,11 +336,47 @@ def mostrar_detalhes_pessoa(nome_pessoa):
 
                 for col, val in zip(["CPF", "Nome", "Data Nascimento", "Telefone", "Endereço", "Bairro", "Estado"], pessoa):
                     Label(detalhes_window, text=f"{col}: {val}").pack()
+
+                Button(detalhes_window, text="Alterar", command=lambda: editar_detalhes_pessoa(pessoa)).pack()
         except mysql.connector.Error as err:
             print(f"Erro ao buscar dados: {err}")
         finally:
             cursor.close()
             con.close()
+
+def editar_detalhes_pessoa(pessoa):
+    editar_window = Toplevel(root)
+    editar_window.title("Editar Detalhes da Pessoa")
+
+    labels = ["CPF", "Nome", "Data Nascimento", "Telefone", "Endereço", "Bairro", "Estado"]
+    entries = {}
+
+    for i, label in enumerate(labels):
+        Label(editar_window, text=label).pack()
+        entry = Entry(editar_window)
+        entry.insert(0, pessoa[i])
+        entry.pack()
+        entries[label] = entry
+
+    def salvar_alteracoes():
+        dados_atualizados = {label: entries[label].get() for label in labels}
+        con = create_db_connection()
+        if con is not None:
+            cursor = con.cursor()
+            try:
+                query = "UPDATE pessoa SET cpf = %s, nome = %s, data_nascimento = %s, telefone = %s, endereco = %s, bairro = %s, estado = %s WHERE cpf = %s"
+                cursor.execute(query, (dados_atualizados["CPF"], dados_atualizados["Nome"], dados_atualizados["Data Nascimento"], dados_atualizados["Telefone"], dados_atualizados["Endereço"], dados_atualizados["Bairro"], dados_atualizados["Estado"], pessoa[0]))
+                con.commit()
+                messagebox.showinfo("Sucesso", "Dados atualizados com sucesso!")
+            except mysql.connector.Error as err:
+                messagebox.showerror("Erro", f"Erro ao atualizar dados: {err}")
+            finally:
+                cursor.close()
+                con.close()
+        editar_window.destroy()
+
+    Button(editar_window, text="Salvar Alterações", command=salvar_alteracoes).pack()
+        
 
 def filtrar_por_tipo():
     global filtro_var
@@ -366,43 +402,37 @@ def filtrar(tipos):
     if con is not None:
         cursor = con.cursor()
         try:
-            lista_pessoas.delete(0, tk.END)  
+            lista_pessoas.delete(0, tk.END)
 
             for tipo in tipos:
-                count_query = ""
+                select_query = ""
                 if tipo == "paciente":
-                    count_query = "SELECT COUNT(*) FROM paciente"
-                    tipo_nome = "Paciente"
+                    select_query = """
+                        SELECT p.nome, 'Paciente', pa.tipo_sanguineo, pa.orgao_transplante
+                        FROM pessoa p
+                        INNER JOIN paciente pa ON p.cpf = pa.cpf
+                    """
                 elif tipo == "medico":
-                    count_query = "SELECT COUNT(*) FROM medico"
-                    tipo_nome = "Médico"
+                    select_query = """
+                        SELECT p.nome, 'Médico', m.crm, m.especialidade
+                        FROM pessoa p
+                        INNER JOIN funcionario f ON p.cpf = f.cpf
+                        INNER JOIN medico m ON f.id_funcionario = m.id_funcionario
+                    """
                 elif tipo == "enfermeiro":
-                    count_query = "SELECT COUNT(*) FROM enfermeiro"
-                    tipo_nome = "Enfermeiro"
+                    select_query = """
+                        SELECT p.nome, 'Enfermeiro', e.coren, e.setor
+                        FROM pessoa p
+                        INNER JOIN funcionario f ON p.cpf = f.cpf
+                        INNER JOIN enfermeiro e ON f.id_funcionario = e.id_funcionario
+                    """
 
-                if count_query:
-                    cursor.execute(count_query)
-                    count_result = cursor.fetchone()
-                    lista_pessoas.insert(tk.END, f"{count_result[0]} pessoas cadastradas como {tipo_nome}")
-
-                query = f"""
-                    SELECT p.nome, 
-                           CASE 
-                             WHEN pa.cpf IS NOT NULL THEN 'Paciente'
-                             WHEN m.id_funcionario IS NOT NULL THEN 'Médico'
-                             WHEN e.id_funcionario IS NOT NULL THEN 'Enfermeiro'
-                             ELSE 'Desconhecido'
-                           END as tipo
-                    FROM pessoa p
-                    LEFT JOIN paciente pa ON p.cpf = pa.cpf
-                    LEFT JOIN funcionario f ON p.cpf = f.cpf
-                    LEFT JOIN medico m ON f.id_funcionario = m.id_funcionario
-                    LEFT JOIN enfermeiro e ON f.id_funcionario = e.id_funcionario
-                """
-                cursor.execute(query)
-                resultado = cursor.fetchall()
-                for linha in resultado:
-                    lista_pessoas.insert(tk.END, f"{linha[0]} - {linha[1]}")
+                if select_query:
+                    cursor.execute(select_query)
+                    resultado = cursor.fetchall()
+                    for linha in resultado:
+                        info_adicional = ', '.join([str(item) for item in linha[2:] if item is not None])
+                        lista_pessoas.insert(tk.END, f"{linha[0]} - {linha[1]} ({info_adicional})")
                     
         except mysql.connector.Error as err:
             print(f"Erro ao buscar dados: {err}")
@@ -479,7 +509,52 @@ def realizar_pesquisa(criterio, texto):
             cursor.close()
             con.close()
 
+def abrir_janela_relatorios():
+    relatorio_window = Toplevel(root)
+    relatorio_window.title("Gerar Relatórios")
 
+    Button(relatorio_window, text="Pacientes por Órgão", command=relatorio_pacientes_por_orgao).pack(fill=tk.X)
+    Button(relatorio_window, text="Médicos por Especialidade", command=relatorio_medicos_por_especialidade).pack(fill=tk.X)
+
+def relatorio_pacientes_por_orgao():
+    con = create_db_connection()
+    if con is not None:
+        cursor = con.cursor()
+        try:
+            cursor.execute("""
+                SELECT orgao_transplante, COUNT(*) 
+                FROM paciente 
+                GROUP BY orgao_transplante
+            """)
+            resultado = cursor.fetchall()
+            lista_pessoas.delete(0, tk.END)
+            for orgao, count in resultado:
+                lista_pessoas.insert(tk.END, f"{orgao}: {count} paciente(s)")
+        except mysql.connector.Error as err:
+            print(f"Erro ao buscar dados: {err}")
+        finally:
+            cursor.close()
+            con.close()
+
+def relatorio_medicos_por_especialidade():
+    con = create_db_connection()
+    if con is not None:
+        cursor = con.cursor()
+        try:
+            cursor.execute("""
+                SELECT especialidade, COUNT(*) 
+                FROM medico 
+                GROUP BY especialidade
+            """)
+            resultado = cursor.fetchall()
+            lista_pessoas.delete(0, tk.END)
+            for especialidade, count in resultado:
+                lista_pessoas.insert(tk.END, f"{especialidade}: {count} médico(s)")
+        except mysql.connector.Error as err:
+            print(f"Erro ao buscar dados: {err}")
+        finally:
+            cursor.close()
+            con.close()
 
 
 
@@ -493,6 +568,10 @@ main_frame.pack(fill=tk.BOTH, expand=True)
 button_frame = Frame(main_frame)
 button_frame.pack(side=tk.TOP, fill=tk.X)
 
+
+botao_gerar_relatorios = Button(button_frame, text="Gerar Relatórios", command=abrir_janela_relatorios, bg="#DE6262", fg="white", highlightbackground="#DE6262", 
+                                borderwidth=0, highlightthickness=0, padx=10, pady=5)
+botao_gerar_relatorios.pack(side=tk.LEFT, padx=10)
 
 botao_filtrar_por = Button(button_frame, text="Filtrar por", command=filtrar_por_tipo,bg="#DE6262", fg="white", highlightbackground="#DE6262", 
                            borderwidth=0, highlightthickness=0, padx=10, pady=5)
