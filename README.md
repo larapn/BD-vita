@@ -14,5 +14,5 @@ Funcionalidades:
 Requisitos
 - Python 3.x
 - MySQL
-- Bibliotecas Python: tkinter, mysql-connector-python
+- Bibliotecas Python: tkinter, mysql-connector-python, pillow
   
